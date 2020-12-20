@@ -49,10 +49,21 @@ def mainPage() {
       input "statusLight", title: "Status light (blinks when heating / solid when ready)", "capability.switch"
       input "toggleSwitch", title: "On/Off toggle to manually initiate heater", "capability.contactSensor"
     }
-    section("<h2>Notifications</h2>"){
-      input "notifyWhenReady", title: "Notify when water is ready", multiple: true, "capability.notification"
-      input "notifyWhenReadyMessage", title: "Notification Message", "string"
-      input "allowedModesForNotifications", title: "Only notify on specific modes", multiple: true, "mode"
+    section("<h2>Notifications (Set 1)</h2>"){
+      input "notifyWhenStarted1Devices", title: "Notify when water heater starts", multiple: true, "capability.notification"
+      input "notifyWhenStarted1Message", title: "Notification Message", default: "Water heater has started heating water", "string"
+      input "notifyWhenStarted1Modes", title: "Only notify on specific modes", multiple: true, "mode"
+      input "notifyWhenReady1Devices", title: "Notify when water is ready", multiple: true, "capability.notification"
+      input "notifyWhenReady1Message", title: "Notification Message", default: "Water heater has finished heating water", "string"
+      input "notifyWhenReady1Modes", title: "Only notify on specific modes", multiple: true, "mode"
+    }
+    section("<h2>Notifications (Set 2)</h2>"){
+      input "notifyWhenStarted2Devices", title: "Notify when water heater starts", multiple: true, "capability.notification"
+      input "notifyWhenStarted2Message", title: "Notification Message", default: "Water heater has started heating water", "string"
+      input "notifyWhenStarted2Modes", title: "Only notify on specific modes", multiple: true, "mode"
+      input "notifyWhenReady2Devices", title: "Notify when water is ready", multiple: true, "capability.notification"
+      input "notifyWhenReady2Message", title: "Notification Message", default: "Water heater has finished heating water", "string"
+      input "notifyWhenReady2Modes", title: "Only notify on specific modes", multiple: true, "mode"
     }
     section("<h2>Testing</h2>"){
       input "dryRun", title: "Dry-run (won't execute any device changes)", defaultValue: false, "bool"
@@ -106,7 +117,6 @@ def circulateWaterOff() {
     circulationSwitch.off()
   }
 }
-
 
 /****************************************************************************/
 /*  SETUP /*
@@ -184,6 +194,17 @@ def scheduleSetup(timeStartNextDay, weekdaysRange) {
 /****************************************************************************/
 /*  EVENT HANDLERS /*
 /****************************************************************************/
+def toggleSwitchContactChangeHandler(evt) {
+  debug("${evt.name} = ${evt.value}")
+  if (evt.value == "open") {
+    // Stop heating
+    setWaterHeaterOff()
+  } else {
+    // Start heating
+    setWaterHeaterOn()
+  }
+}
+
 def onScheduleHandlerWeekday() {
   state.targetTime = timeToday(timeStartNextWeekDay).getTime()
   onScheduleHandler()
@@ -231,6 +252,8 @@ def thermostatOperatingStateChangeHandler(evt) {
   if (evt.value == "heating") {
     state.timeHeatingStarted = now()
     state.isHeating = true
+    sendNotificationsWhenStartSet1()
+    sendNotificationsWhenStartSet2()
     debug("Started at ${new Date()}")
   } else {
     state.timeHeatingEnded = now()
@@ -298,16 +321,64 @@ def onFinishedHeatingWater(minutesToRunAfter) {
       debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
     }
   }
+  // Notify
+  sendNotificationsWhenReadySet1()
+  sendNotificationsWhenReadySet2()
 }
 
-def toggleSwitchContactChangeHandler(evt) {
-  debug("${evt.name} = ${evt.value}")
-  if (evt.value == "open") {
-    // Stop heating
-    setWaterHeaterOff()
-  } else {
-    // Start heating
-    setWaterHeaterOn()
+def sendNotificationsWhenStartSet1() {
+  if (notifyWhenStart1Devices != null) {
+    return
+  }
+  if (notifyWhenStart1Modes != null) {
+    if (!notifyWhenStart1Modes.any{ it == location.mode }) {
+      return
+    }
+  }
+  notifyWhenStart1Devices.each { 
+    device -> device.deviceNotification(notifyWhenStart1Message)
+  }
+}
+
+def sendNotificationsWhenReadySet1() {
+  if (notifyWhenReady1Devices != null) {
+    return
+  }
+  if (notifyWhenReady1Modes != null) {
+    if (!notifyWhenReady1Modes.any{ it == location.mode }) {
+      return
+    }
+  }
+  notifyWhenReady1Devices.each { 
+    device -> device.deviceNotification(notifyWhenReady1Message)
+  }
+}
+
+def sendNotificationsWhenStartSet2() {
+  if (notifyWhenStart2Devices != null) {
+    return
+  }
+  if (notifyWhenStart2Modes != null) {
+    if (!notifyWhenStart2Modes.any{ it == location.mode }) {
+      return
+    }
+  }
+  notifyWhenStart2Devices.each { 
+    device -> device.deviceNotification(notifyWhenStart2Message)
+  }
+}
+
+def sendNotificationsWhenReadySet2() {
+  if (notifyWhenReady2Devices != null) {
+    return
+  }
+  if (notifyWhenReady2Modes != null) {
+    if (!notifyWhenReady2Modes.any{ it == location.mode }) {
+      return
+    }
+  }
+  notifyWhenReady2Devices.each { 
+    device -> device.deviceNotification(notifyWhenReady2Message)
   }
 }
 
