@@ -10,24 +10,19 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *  Thermostat Timer
- *
  *  Author: jaime20@boteros.org
- *
- *  Change Log
- *  2020-12-13  - v01.0 Created
  *
  */
 
 definition(
-    name: "Smart Water Heater",
-    namespace: "ljbotero",
-    author: "jaime20@boteros.org",
-    description: "Optimize when you run your water heater",
-    category: "Green Living",
-    iconUrl: "https://s3.amazonaws.com/smartapp-icons/GreenLiving/Cat-GreenLiving.png",
-    iconX2Url: "https://s3.amazonaws.com/smartapp-icons/GreenLiving/Cat-GreenLiving@2x.png",
-    iconX3Url: "https://s3.amazonaws.com/smartapp-icons/GreenLiving/Cat-GreenLiving@3x.png"
+  name: "Smart Water Heater",
+  namespace: "ljbotero",
+  author: "jaime20@boteros.org",
+  description: "Optimize when you run your water heater",
+  category: "Green Living",
+  iconUrl: "https://s3.amazonaws.com/smartapp-icons/GreenLiving/Cat-GreenLiving.png",
+  iconX2Url: "https://s3.amazonaws.com/smartapp-icons/GreenLiving/Cat-GreenLiving@2x.png",
+  iconX3Url: "https://s3.amazonaws.com/smartapp-icons/GreenLiving/Cat-GreenLiving@3x.png"
 )
 
 preferences {
@@ -36,22 +31,22 @@ preferences {
 
 def mainPage() {
   dynamicPage(name: "mainPage") {
-    section("<h2>Smart Water Heater</h2>"){      
-      input "waterHeater", title: "Water heater", required: true,"capability.thermostat"
+    section("<h2>Smart Water Heater</h2>"){
+      input "waterHeater", title: "Water heater", required: true, "capability.thermostat"
       input "maxTemp", "number", range: "70..150", title: "Max temperature to set heater", required: true, defaultValue: 115
     }
     section("<h2>Planning</h2>") {
-      input "enableSchedule", title:"Enable running on schedule", defaultValue: true, "bool"
+      input "enableSchedule", title: "Enable running on schedule", defaultValue: true, "bool"
       input "allowedModes", title: "Run on specific modes", multiple: true, "mode"
-      input "timeStartNextWeekDay", title:"Time I wanto have hot water on <b>weekdays</b>", "time"
-      input "timeStartNextWeekend", title:"Time I wanto have hot water on <b>weekends</b>", "time"
+      input "timeStartNextWeekDay", title: "Time I wanto have hot water on <b>weekdays</b>", "time"
+      input "timeStartNextWeekend", title: "Time I wanto have hot water on <b>weekends</b>", "time"
       input "minutesToRunAfterHeated", "number", range: "0..*", title: "Minutes to keep water hot after scheduled time", required: true, defaultValue: 120
-      input "minutesToHeatWater", range: "0..*", title:"Estimated number of minutes it takes to heat water", "number"
-      input "estimateMinutesToHeatWater", title:"Automatically estimate minutes it takes to heat water", defaultValue: true, "bool"
+      input "minutesToHeatWater", range: "0..*", title: "Estimated number of minutes it takes to heat water", "number"
+      input "estimateMinutesToHeatWater", title: "Automatically estimate minutes it takes to heat water", defaultValue: true, "bool"
     }
     section("<h2>Control & Status</h2>"){
       input "circulationSwitch", title: "Switch to turn when water heater is active (typically used for water circulation)", "capability.switch"
-      input "statusLight", title:"Status light (blinks when heating / solid when ready)", "capability.*"
+      input "statusLight", title: "Status light (blinks when heating / solid when ready)", "capability.switch"
       input "toggleSwitch", title: "On/Off toggle to manually initiate heater", "capability.contactSensor"
     }
     section("<h2>Notifications</h2>"){
@@ -59,49 +54,107 @@ def mainPage() {
       input "notifyWhenReadyMessage", title: "Notification Message", "string"
       input "allowedModesForNotifications", title: "Only notify on specific modes", multiple: true, "mode"
     }
+    section("<h2>Testing</h2>"){
+      input "dryRun", title: "Dry-run (won't execute any device changes)", defaultValue: false, "bool"
+      input "debugEnabled", title: "Log debug messages", defaultValue: false, "bool"
+    }
   }
 }
 
+/****************************************************************************/
+/*  HELPER FUNCTIONS /*
+/****************************************************************************/
+
+def debug(msg) {
+  if (debugEnabled) {
+    log.debug msg
+  }
+}
+
+def getMaxTemp() {
+  def maxTempLimit = new Float(waterHeater.getDataValue("maxTemp"))
+  if (maxTempLimit < maxTemp) {
+    return maxTempLimit
+  }
+  return maxTemp
+}
+
+def getMinTemp() {
+  return new Float(waterHeater.getDataValue("minTemp"))
+}
+
+def setWaterHeaterOn() {
+  debug("setWaterHeaterOn")
+  if (!dryRun) { waterHeater.setHeatingSetpoint(getMaxTemp()) }
+}
+
+def setWaterHeaterOff() {
+  debug("setWaterHeaterOff")
+  if (!dryRun) { waterHeater.setHeatingSetpoint(getMinTemp()) }
+}
+
+def circulateWaterOn() {
+  debug("Circulation switch on")
+  if (!dryRun && circulationSwitch != null) {
+    circulationSwitch.on()
+  }
+}
+
+def circulateWaterOff() {
+  debug("Circulation switch off")
+  if (!dryRun && circulationSwitch != null) {
+    circulationSwitch.off()
+  }
+}
+
+
+/****************************************************************************/
+/*  SETUP /*
+/****************************************************************************/
+
 def installed() {
-  log.debug "Installed app"
+  debug("Installed app")
   initialize()
 }
 
 def updated(settings) {
   unsubscribe()
-  unschedule()
   initialize()
-  log.debug "updated settings"
+  debug("updated settings")
 }
 
-def initialize() { 
-  subscribe(waterHeater, "heatingSetpoint", heatingSetpointChangeHandler)    
-  subscribe(waterHeater, "thermostatOperatingState", thermostatOperatingStateChangeHandler) 
+def initialize() {
+  state.testing = false //false // used to run unit tests
+
+  subscribe(waterHeater, "heatingSetpoint", heatingSetpointChangeHandler)
+  subscribe(waterHeater, "thermostatOperatingState", thermostatOperatingStateChangeHandler)
   
+  if (toggleSwitch != null) {
+    subscribe(toggleSwitch, "contact", toggleSwitchContactChangeHandler)
+  }
+
   if (minutesToHeatWater == null) {
     app.updateSetting("minutesToHeatWater", 10)
-    log.debug "Setting minutesToHeatWater to: 10"
+    debug("Setting minutesToHeatWater to: 10")
   }
   def minTempLimit = new Float(waterHeater.getDataValue("minTemp"))
-	def maxTempLimit = new Float(waterHeater.getDataValue("maxTemp"))
-  
+  def maxTempLimit = new Float(waterHeater.getDataValue("maxTemp"))
+
   if (maxTemp <= minTempLimit) {
     app.updateSetting("maxTemp", minTempLimit + 5)
   } else if (maxTemp > maxTempLimit) {
-    log.debug "set maxTemp: ${maxTemp} to maxTempLimit: ${maxTempLimit}"
+    debug("set maxTemp: ${maxTemp} to maxTempLimit: ${maxTempLimit}")
     app.updateSetting("maxTemp", maxTempLimit)
   }
   initSchedule()
-  
-  state.testing = true //false // used to run unit tests
-/*
-  if (state?.testing) {
-    onFinishedHeatingWaterTest()
-  }
-*/
+
+  if (state?.testing) onFinishedHeatingWaterTest()
 }
 
 def initSchedule() {
+  unschedule(onScheduleHandlerWeekday)
+  unschedule(onScheduleHandlerWeekend)
+
   def scheduleString = scheduleSetup(timeStartNextWeekDay, "MON-FRI")
   if (scheduleString != null) {
     schedule(scheduleString, onScheduleHandlerWeekday)
@@ -115,7 +168,7 @@ def initSchedule() {
 
 def scheduleSetup(timeStartNextDay, weekdaysRange) {
   if (timeStartNextDay == null) {
-    log.debug "No schedule time defined for ${weekdaysRange}"
+    debug("No schedule time defined for ${weekdaysRange}")
     return null
   }
   def timeStartNextDayMillis = timeToday(timeStartNextDay).getTime()
@@ -124,36 +177,13 @@ def scheduleSetup(timeStartNextDay, weekdaysRange) {
   def plannedMinuteStartNextDay = plannedTimeStartNextDay.format("m")
   // http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html
   def weekdaySchedule = "0 ${plannedMinuteStartNextDay} ${plannedHourStartNextDay} ? * ${weekdaysRange}"
-  log.debug "Schedule: ${weekdaySchedule}"
+  debug "Schedule: ${weekdaySchedule}"
   return weekdaySchedule
 }
 
-def getMaxTemp() {
-	def maxTempLimit = new Float(waterHeater.getDataValue("maxTemp"))
-  if (maxTempLimit < maxTemp) {
-    return maxTempLimit
-  }
-  return maxTemp
-}
-
-def getMinTemp() {
-	return new Float(waterHeater.getDataValue("minTemp"))
-}
-
-def setWaterHeaterOn() {
-  log.debug("setWaterHeaterOn")
-  if (!state?.testing) {
-    waterHeater.setHeatingSetpoint(getMaxTemp())     
-  }
-}
-
-def setWaterHeaterOff() {
-  log.debug("setWaterHeaterOff")
-  if (!state?.testing) {
-    waterHeater.setHeatingSetpoint(getMinTemp())     
-  }
-}
-
+/****************************************************************************/
+/*  EVENT HANDLERS /*
+/****************************************************************************/
 def onScheduleHandlerWeekday() {
   state.targetTime = timeToday(timeStartNextWeekDay).getTime()
   onScheduleHandler()
@@ -165,82 +195,78 @@ def onScheduleHandlerWeekend() {
 }
 
 def onScheduleHandler() {
-  log.debug "onScheduleHandler"
+  debug("onScheduleHandler")
   if (!enableSchedule) {
-      log.debug "Schedule cancelled since app is not enabled"
-      return
+    debug("Schedule cancelled since app is not enabled")
+    return
   }
   if (allowedModes != null) {
-    if (!allowedModes.any{it == location.mode}) {
-      log.debug "Schedule cancelled since current mode (${location.mode}) is no allowed to run"
+    if (!allowedModes.any{ it == location.mode }) {
+      debug("Schedule cancelled since current mode (${location.mode}) is no allowed to run")
       return
     }
   }
-  state.startedOnSchedule = true  
+  state.startedOnSchedule = true
   setWaterHeaterOn()
 }
 
 def heatingSetpointChangeHandler(evt) {
   def currSetPoint = new Float(evt.value)
-  log.debug "heatingSetpoint: ${evt.name} = ${evt.value} , MaxTemp = ${getMaxTemp()}, waterHeater.heatingSetpoint = ${currSetPoint}"
+  debug("${evt.name} = ${evt.value}")
   if (getMinTemp() - 0.5 < currSetPoint && getMinTemp() + 0.5 > currSetPoint) {
-    log.debug("Smart water heater is Inactive (${evt.name} = ${evt.value})")
+    debug("Smart water heater is Inactive (${evt.name} = ${evt.value})")
     state.waterHeaterActive = false
+    circulateWaterOff()
   } else if (getMaxTemp() - 0.5 < currSetPoint && getMaxTemp() + 0.5 > currSetPoint) {
-    log.debug("Smart water heater is Active (${evt.name} = ${evt.value})")
+    debug("Smart water heater is Active (${evt.name} = ${evt.value})")
     state.waterHeaterActive = true
+    circulateWaterOn()
   }
   unschedule(updateStatusLight)
-  schedule("0/2 * * * * ?", "updateStatusLight")
+  schedule("0/2 * * * * ?", updateStatusLight)
 }
 
 def thermostatOperatingStateChangeHandler(evt) {
-  log.debug "${evt.name} = ${evt.value}"
+  debug("${evt.name} = ${evt.value}")
   if (evt.value == "heating") {
-    state.timeHeatingStarted = now()        
+    state.timeHeatingStarted = now()
     state.isHeating = true
-    log.debug "Started at ${new Date()}"
+    debug("Started at ${new Date()}")
   } else {
     state.timeHeatingEnded = now()
     state.isHeating = false
     onFinishedHeatingWater(minutesToRunAfterHeated)
     state.startedOnSchedule = false
-    log.debug "Ended at ${new Date()}"
+    debug("Ended at ${new Date()}")
   }
   unschedule(updateStatusLight)
-  schedule("0/2 * * * * ?", "updateStatusLight")
+  schedule("0/2 * * * * ?", updateStatusLight)
 }
 
 def updateStatusLight() {
   if (statusLight == null) {
+    debug("No status light has beed defined")
     unschedule(updateStatusLight)
     return;
   }
   if (!state?.waterHeaterActive) {
     unschedule(updateStatusLight)
-    log.debug "Turning statusLight off"
-    if (!state?.testing) {
-      statusLight.off()
-    }
+    debug("Turning statusLight off")
+    if (!dryRun) { statusLight.off() }
     return
   }
   if (!state?.isHeating) {
     unschedule(updateStatusLight)
-    log.debug "Turning statusLight on"
-    if (!state?.testing) {
-      statusLight.on()
-    }
+    debug("Turning statusLight on")
+    if (!dryRun) { statusLight.on() }
+    return
   }
   if (state?.statusLightOn) {
-    log.debug "Turning statusLight off - toggle"
-    if (!state?.testing) {
-      statusLight.off()  
-    }
+    debug("Turning statusLight off - toggle")
+    if (!dryRun) { statusLight.off() }
   } else {
-    log.debug "Turning statusLight on - toggle"
-    if (!state?.testing) {
-      statusLight.on()  
-    }
+    debug("Turning statusLight on - toggle")
+    if (!dryRun) { statusLight.on() }
   }
   state.statusLightOn = !state?.statusLightOn
 }
@@ -253,11 +279,9 @@ def onFinishedHeatingWater(minutesToRunAfter) {
     // Update estimate
     state.minutesHeating = Math.round((state.timeHeatingEnded - state.timeHeatingStarted) / (60 * 1000)).toInteger()
     // Assuming 5 is the minimum it takes to heat the water from min temp and 60 is the max time it could take
-    if (state.minutesHeating > 5 && state.minutesHeating < 60) { 
+    if (state.minutesHeating > 5 && state.minutesHeating < 60) {
       app.updateSetting("minutesToHeatWater", state.minutesHeating)
-      log.debug "Updating minutesToHeatWater to: ${state.minutesHeating}"
-      unschedule(onScheduleHandlerWeekday)
-      unschedule(onScheduleHandlerWeekend)
+      debug("Updating minutesToHeatWater to: ${state.minutesHeating}")
       runInMillis(5000, "initSchedule") // Wait a bit to ensure minutesToHeatWater is already persisted
     }
   }
@@ -271,69 +295,49 @@ def onFinishedHeatingWater(minutesToRunAfter) {
       def waitMillis = endTimeMillis - now()
       state.waitMinsUntilShutOff = Math.round(waitMillis / (60 * 1000)).toInteger()
       runInMillis(waitMillis, "setWaterHeaterOff")
-      log.debug "Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off"
-    }    
-  } 
+      debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
+    }
+  }
+}
+
+def toggleSwitchContactChangeHandler(evt) {
+  debug("${evt.name} = ${evt.value}")
+  if (evt.value == "open") {
+    // Stop heating
+    setWaterHeaterOff()
+  } else {
+    // Start heating
+    setWaterHeaterOn()
+  }
 }
 
 /****************************************************************************/
 /*  UNIT TESTS                                                              /*
 /****************************************************************************/
 
-def onFinishedHeatingWaterTest() {   
+def onFinishedHeatingWaterTest() {
   state.waterHeaterActive = true
   state.startedOnSchedule = true
   state.timeHeatingStarted = 1608413794070
   state.timeHeatingEnded = 1608415254031
   state.targetTime = now() + (20 * 60 * 1000)
   onFinishedHeatingWater(10)
-  
+
   // Unit test: Updating extimate
   if (state.minutesHeating != 24) {
     log.error("Failed unit test - onFinishedHeatingWaterTest - Updating extimate");
   }
-  
+
   // Unit test: Keep it running for 10 minute, but still 20 minutes until reahing the target time
   if (state.waitMinsUntilShutOff != 30) {
     log.error("Failed unit test - onFinishedHeatingWaterTest -  Keep it running for 10 minute, but still 20 minutes until reahing the target time (state.waitMinsUntilShutOff=${state.waitMinsUntilShutOff})");
   }
-  
+
   state.targetTime = now() - (9 * 60 * 1000)
   onFinishedHeatingWater(10)
   // Unit test: Keep it running for 10 minute, but it passed 9 minutes ago
   if (state.waitMinsUntilShutOff != 1) {
     log.error("Failed unit test - onFinishedHeatingWaterTest - Keep it running for 10 minute, but it passed 9 minutes ago (state.waitMinsUntilShutOff=${state.waitMinsUntilShutOff})");
   }
-  
+
 }
-
-/*
-//def timeStartNextWeekDayMillis = new Date().parse("yyy-MM-dd'T'HH:mm:ss.SSSZ", timeStartNextWeekDay).getTime()
-//runIn(5, delayTurnOff)
-//app.updateSetting("timeStartNextDay", getLocalTime())
-//sendEvent(name: "timeStartNextDay", value: 123)
-//updateSetting("minutesToRunAfterHeated", [value: "10", type: "number"])
-//    subscribe(switch1, "switch.on", delayTurnOff)
-//    log.debug "Updated with settings: ${settings}"
-//    subscribe(switch1, "switch.off", cancelDelay)
-
-if (opSet < thermostat1.currentValue("temperature")) {
-        thermostat1.setCoolingSetpoint(opSet)	
-    } else {
-        thermostat1.setHeatingSetpoint(opSet)
-    }
-
-
-def getDayOfTheWeek() {
-  // Sun: 1, Mon:2, Tue: 3, Wed: 4: Thu: 5, Fri: 6, SAT: 7
-  //Calendar localCalendar = Calendar.getInstance(TimeZone.getDefault())
-  //return localCalendar.get(Calendar.DAY_OF_WEEK)
-  def dayWeekStr = new Date().format("EEE", location.timeZone)
-  if (dayWeekStr == "Mon"
-}
-
-*/
-//  log.debug("Waiting delay to switch off")
-//  def delay = 60 * minutes
-//runIn(delay, switchOff)
-//  runIn(15, switchOff)
