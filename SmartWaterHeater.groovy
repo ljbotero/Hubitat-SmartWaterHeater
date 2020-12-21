@@ -99,16 +99,25 @@ def setWaterHeaterOff() {
 def circulateWaterOn() {
   debug("Circulation switch on")
   if (!dryRun && circulationSwitch != null) {
+    state.disableToggleSwitchContactChangeHandler = true
     circulationSwitch.on()
+    runInMillis(1500, "enableToggleSwitchContactChangeHandler")
   }
 }
 
 def circulateWaterOff() {
   debug("Circulation switch off")
   if (!dryRun && circulationSwitch != null) {
+    state.disableToggleSwitchContactChangeHandler = true
     circulationSwitch.off()
+    runInMillis(1500, "enableToggleSwitchContactChangeHandler")
   }
 }
+
+def enableToggleSwitchContactChangeHandler() {
+  state.disableToggleSwitchContactChangeHandler = false;
+}
+
 
 /****************************************************************************/
 /*  SETUP /*
@@ -208,10 +217,6 @@ def toggleSwitchContactChangeHandler(evt) {
   runInMillis(1500, "enableToggleSwitchContactChangeHandler")
 }
 
-def enableToggleSwitchContactChangeHandler() {
-  state.disableToggleSwitchContactChangeHandler = false;
-}
-
 def disableToggleSwitchContactChangeHandler() {
   if (toggleSwitches != null) {
     toggleSwitches.each { 
@@ -267,7 +272,9 @@ def thermostatOperatingStateChangeHandler(evt) {
   if (evt.value == "heating") {
     state.timeHeatingStarted = now()
     state.isHeating = true
-    sendNotifications(notifyWhenStart1Devices, notifyWhenStart1Modes, notifyWhenStart1Message)
+    if (state?.waterHeaterActive) {
+      sendNotifications(notifyWhenStart1Devices, notifyWhenStart1Modes, notifyWhenStart1Message)
+    }
     debug("Started at ${new Date()}")
   } else {
     state.timeHeatingEnded = now()
