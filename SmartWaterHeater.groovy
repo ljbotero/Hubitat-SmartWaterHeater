@@ -49,21 +49,13 @@ def mainPage() {
       input "statusLight", title: "Status light (blinks when heating / solid when ready)", "capability.switch"
       input "toggleSwitches", title: "On/Off switch to manually initiate heater", multiple: true, "capability.*"
     }
-    section("<h2>Notifications (Set 1)</h2>"){
+    section("<h2>Notifications</h2>"){
       input "notifyWhenStart1Devices", title: "Notify when water heater starts", multiple: true, "capability.notification"
       input "notifyWhenStart1Message", title: "Notification Message", default: "Water heater has started heating water", "string"
       input "notifyWhenStart1Modes", title: "Only notify on specific modes", multiple: true, "mode"
       input "notifyWhenReady1Devices", title: "Notify when water is ready", multiple: true, "capability.notification"
       input "notifyWhenReady1Message", title: "Notification Message", default: "Water heater has finished heating water", "string"
       input "notifyWhenReady1Modes", title: "Only notify on specific modes", multiple: true, "mode"
-    }
-    section("<h2>Notifications (Set 2)</h2>"){
-      input "notifyWhenStart2Devices", title: "Notify when water heater starts", multiple: true, "capability.notification"
-      input "notifyWhenStart2Message", title: "Notification Message", default: "Water heater has started heating water", "string"
-      input "notifyWhenStart2Modes", title: "Only notify on specific modes", multiple: true, "mode"
-      input "notifyWhenReady2Devices", title: "Notify when water is ready", multiple: true, "capability.notification"
-      input "notifyWhenReady2Message", title: "Notification Message", default: "Water heater has finished heating water", "string"
-      input "notifyWhenReady2Modes", title: "Only notify on specific modes", multiple: true, "mode"
     }
     section("<h2>Testing</h2>"){
       input "dryRun", title: "Dry-run (won't execute any device changes)", defaultValue: false, "bool"
@@ -276,7 +268,6 @@ def thermostatOperatingStateChangeHandler(evt) {
     state.timeHeatingStarted = now()
     state.isHeating = true
     sendNotifications(notifyWhenStart1Devices, notifyWhenStart1Modes, notifyWhenStart1Message)
-    sendNotifications(notifyWhenStart2Devices, notifyWhenStart2Modes, notifyWhenStart2Message)
     debug("Started at ${new Date()}")
   } else {
     state.timeHeatingEnded = now()
@@ -346,20 +337,19 @@ def onFinishedHeatingWater(minutesToRunAfter) {
   }
   // Notify
   sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message)
-  sendNotifications(notifyWhenReady2Devices, notifyWhenReady2Modes, notifyWhenReady2Message)
 }
 
-def sendNotifications(notifyWhenStartDevices, notifyWhenStartModes, notifyWhenStartMessage) {
-  if (notifyWhenStartDevices != null) {
+def sendNotifications(notifyDevices, notifyModes, notifyMessage) {
+  if (notifyDevices == null) {
     return
   }
-  if (notifyWhenStartModes != null) {
-    if (!notifyWhenStartModes.any{ it == location.mode }) {
+  if (notifyModes != null) {
+    if (!notifyModes.any{ it == location.mode }) {
       return
     }
   }
-  notifyWhenStartDevices.each { 
-    device -> device.deviceNotification(notifyWhenStartMessage)
+  notifyDevices.each { 
+    device -> device.deviceNotification(notifyMessage)
   }
 }
 
