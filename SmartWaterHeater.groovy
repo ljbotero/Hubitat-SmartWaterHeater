@@ -39,8 +39,9 @@ def mainPage() {
       input "enableSchedule", title: "Enable running on schedule", defaultValue: true, "bool"
       input "allowedModes", title: "Run on specific modes", multiple: true, "mode"
       input "timeStartNextWeekDay", title: "Time I wanto have hot water on <b>weekdays</b>", "time"
-      input "timeStartNextWeekend", title: "Time I wanto have hot water on <b>weekends</b>", "time"
+      input "timeStartNextWeekend", title: "Time I wanto have hot water on <b>weekends</b> or holidays", "time"
       input "minutesToRunAfterHeated", "number", range: "0..*", title: "Minutes to keep water hot after scheduled time", required: true, defaultValue: 120
+      input "minutesToRunAfterHeatedManually", "number", range: "0..*", title: "Minutes to keep water hot after manually activated", required: true, defaultValue: 30
       input "minutesToHeatWater", range: "0..*", title: "Estimated number of minutes it takes to heat water", "number"
       input "estimateMinutesToHeatWater", title: "Automatically estimate minutes it takes to heat water", defaultValue: true, "bool"
     }
@@ -48,6 +49,7 @@ def mainPage() {
       input "circulationSwitch", title: "Switch to turn when water heater is active (typically used for water circulation)", "capability.switch"
       input "statusLight", title: "Status light (blinks when heating / solid when ready)", "capability.switch"
       input "toggleSwitches", title: "On/Off switch to manually initiate heater", multiple: true, "capability.*"
+      input "holidaySwitch", title: "Switch that is turned-on on holidays (i.e. <a href='https://github.com/dcmeglio/hubitat-holidayswitcher'>hubitat-holidayswitcher</a>)", "capability.switch"
     }
     section("<h2>Notifications</h2>"){
       input "notifyWhenStart1Devices", title: "Notify when water heater starts", multiple: true, "capability.notification"
@@ -56,6 +58,7 @@ def mainPage() {
       input "notifyWhenReady1Devices", title: "Notify when water is ready", multiple: true, "capability.notification"
       input "notifyWhenReady1Message", title: "Notification Message", default: "Water heater has finished heating water", "string"
       input "notifyWhenReady1Modes", title: "Only notify on specific modes", multiple: true, "mode"
+      input "notifyReadySwitch1", title: "Turn on when water is hot", "capability.switch"
     }
     section("<h2>Testing</h2>"){
       input "dryRun", title: "Dry-run (won't execute any device changes)", defaultValue: false, "bool"
@@ -97,27 +100,18 @@ def setWaterHeaterOff() {
 }
 
 def circulateWaterOn() {
-  debug("Circulation switch on")
   if (!dryRun && circulationSwitch != null) {
-    state.disableToggleSwitchContactChangeHandler = true
     circulationSwitch.on()
-    runInMillis(1500, "enableToggleSwitchContactChangeHandler")
+    debug("Circulation switch on")
   }
 }
 
 def circulateWaterOff() {
-  debug("Circulation switch off")
   if (!dryRun && circulationSwitch != null) {
-    state.disableToggleSwitchContactChangeHandler = true
     circulationSwitch.off()
-    runInMillis(1500, "enableToggleSwitchContactChangeHandler")
+    debug("Circulation switch off")
   }
 }
-
-def enableToggleSwitchContactChangeHandler() {
-  state.disableToggleSwitchContactChangeHandler = false;
-}
-
 
 /****************************************************************************/
 /*  SETUP /*
@@ -148,7 +142,6 @@ def initialize() {
       device -> subscribe(device, "switch", toggleSwitchContactChangeHandler)
     }
   }
-
 
   if (minutesToHeatWater == null) {
     app.updateSetting("minutesToHeatWater", 10)
@@ -202,10 +195,6 @@ def scheduleSetup(timeStartNextDay, weekdaysRange) {
 /*  EVENT HANDLERS /*
 /****************************************************************************/
 def toggleSwitchContactChangeHandler(evt) {
-  if (state?.disableToggleSwitchContactChangeHandler) {
-    return
-  }
-  state.disableToggleSwitchContactChangeHandler = true
   debug("${evt.name} = ${evt.value}")
   if (evt.value == "open" || evt.value == "off") {
     // Stop heating
@@ -214,18 +203,20 @@ def toggleSwitchContactChangeHandler(evt) {
     // Start heating
     setWaterHeaterOn()
   }
-  runInMillis(1500, "enableToggleSwitchContactChangeHandler")
-}
-
-def disableToggleSwitchContactChangeHandler() {
-  if (toggleSwitches != null) {
-    toggleSwitches.each { 
-      device -> unsubscribe(device, "contact", toggleSwitchContactChangeHandler)
-    }
-  }
 }
 
 def onScheduleHandlerWeekday() {
+  if (holidaySwitch.currentValue("switch") == "on") {
+    debug("Running schedule for Holiday")
+    state.targetTime = timeToday(timeStartNextWeekend).getTime()
+    def targetWaitMillis = (state.targetTime - (minutesToHeatWater * 60 * 1000)) - now()
+    if (targetWaitMillis > 0) {
+      debug("Delaying start to ${targetWaitMillis/ (60 * 1000)} minutes")
+      runInMillis(targetWaitMillis, "onScheduleHandler")
+      return
+    }
+    debug("Use case not handled: When holiday start stime is earlier than weekday's start times")
+  } 
   state.targetTime = timeToday(timeStartNextWeekDay).getTime()
   onScheduleHandler()
 }
@@ -256,11 +247,14 @@ def heatingSetpointChangeHandler(evt) {
   debug("${evt.name} = ${evt.value}")
   if (getMinTemp() - 0.5 < currSetPoint && getMinTemp() + 0.5 > currSetPoint) {
     debug("Smart water heater is Inactive (${evt.name} = ${evt.value})")
-    state.waterHeaterActive = false
+    state.waterHeaterActive = false    
+    notifyReadySwitch1.off()
     circulateWaterOff()
   } else if (getMaxTemp() - 0.5 < currSetPoint && getMaxTemp() + 0.5 > currSetPoint) {
     debug("Smart water heater is Active (${evt.name} = ${evt.value})")
     state.waterHeaterActive = true
+    state.notificationStartedSent = false
+    state.notificationEndedSent = false
     circulateWaterOn()
   }
   unschedule(updateStatusLight)
@@ -272,14 +266,19 @@ def thermostatOperatingStateChangeHandler(evt) {
   if (evt.value == "heating") {
     state.timeHeatingStarted = now()
     state.isHeating = true
-    if (state?.waterHeaterActive) {
+    if (state?.waterHeaterActive && !state?.notificationStartedSent) {
       sendNotifications(notifyWhenStart1Devices, notifyWhenStart1Modes, notifyWhenStart1Message)
+      state.notificationStartedSent = true
     }
     debug("Started at ${new Date()}")
   } else {
     state.timeHeatingEnded = now()
     state.isHeating = false
-    onFinishedHeatingWater(minutesToRunAfterHeated)
+    if (state?.startedOnSchedule) {
+      onFinishedHeatingWater(minutesToRunAfterHeated)
+    } else {
+      onFinishedHeatingWater(minutesToRunAfterHeatedManually)
+    }
     state.startedOnSchedule = false
     debug("Ended at ${new Date()}")
   }
@@ -341,9 +340,17 @@ def onFinishedHeatingWater(minutesToRunAfter) {
       runInMillis(waitMillis, "setWaterHeaterOff")
       debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
     }
+  } else {
+    def waitMillis = minutesToRunAfter * 60 * 1000
+    runInMillis(waitMillis, "setWaterHeaterOff")
+    debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
   }
   // Notify
-  sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message)
+  if (!state?.notificationEndedSent) {
+    sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message)
+    notifyReadySwitch1.on()
+    state.notificationEndedSent = true
+  }
 }
 
 def sendNotifications(notifyDevices, notifyModes, notifyMessage) {
