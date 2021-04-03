@@ -196,29 +196,30 @@ def scheduleSetup(timeStartNextDay, weekdaysRange) {
 /****************************************************************************/
 /*  EVENT HANDLERS /*
 /****************************************************************************/
-def toggleSwitchContactChange(evtValue) {
+def toggleSwitchChangeValue(evtValue) {
   if (state?.toggleSwitchContactState == evtValue) {
     return
   }
-  state.toggleSwitchContact = evtValue
+  state.toggleSwitchContactState = evtValue
   if (evtValue == "off") {
     // Stop heating
     setWaterHeaterOff()   
     toggleSwitches.each { device -> 
       device.off()
     }
-  } else (evtValue == "on") {
+  } else {
     // Start heating
     setWaterHeaterOn()
     toggleSwitches.each { device ->
       device.on()
     }
   }
+  debug("toggleSwitchChangeValue = ${evtValue}")
 }
 
 def toggleSwitchContactChangeHandler(evt) {
   debug("${evt.name} = ${evt.value}")
-  toggleSwitchContactChange(evt.value)
+  toggleSwitchChangeValue(evt.value)
 }
 
 
@@ -267,14 +268,14 @@ def heatingSetpointChangeHandler(evt) {
     state.waterHeaterActive = false    
     notifyReadySwitch1.off()
     circulateWaterOff()
-    toggleSwitchContactChange("off")
+    toggleSwitchChangeValue("off")
   } else if (getMaxTemp() - 0.5 < currSetPoint && getMaxTemp() + 0.5 > currSetPoint) {
     debug("Smart water heater is Active (${evt.name} = ${evt.value})")
     state.waterHeaterActive = true
     state.notificationStartedSent = false
     state.notificationEndedSent = false
     circulateWaterOn()
-    toggleSwitchContactChange("on")
+    toggleSwitchChangeValue("on")
   }
   unschedule(updateStatusLight)
   schedule("0/2 * * * * ?", updateStatusLight)
