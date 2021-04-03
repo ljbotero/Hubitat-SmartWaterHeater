@@ -48,7 +48,7 @@ def mainPage() {
     section("<h2>Control & Status</h2>"){
       input "circulationSwitch", title: "Switch to turn when water heater is active (typically used for water circulation)", "capability.switch"
       input "statusLight", title: "Status light (blinks when heating / solid when ready)", "capability.switch"
-      input "toggleSwitches", title: "On/Off switch to manually initiate heater", multiple: true, "capability.*"
+      input "toggleSwitches", title: "On/Off switch to manually initiate heater", multiple: true, "capability.switch"
       input "holidaySwitch", title: "Switch that is turned-on on holidays (i.e. <a href='https://github.com/dcmeglio/hubitat-holidayswitcher'>hubitat-holidayswitcher</a>)", "capability.switch"
     }
     section("<h2>Notifications</h2>"){
@@ -128,21 +128,23 @@ def updated(settings) {
   debug("updated settings")
 }
 
+def enableToggleSwitchContactChange() {
+  if (toggleSwitches == null) {
+    return
+  }
+  toggleSwitches.each { device -> 
+      subscribe(device, "switch", toggleSwitchContactChangeHandler)
+  }
+}
+
 def initialize() {
   state.testing = false //false // used to run unit tests
 
   subscribe(waterHeater, "heatingSetpoint", heatingSetpointChangeHandler)
   subscribe(waterHeater, "thermostatOperatingState", thermostatOperatingStateChangeHandler)
   
-  if (toggleSwitches != null) {
-    toggleSwitches.each { 
-      device -> subscribe(device, "contact", toggleSwitchContactChangeHandler)
-    }
-    toggleSwitches.each { 
-      device -> subscribe(device, "switch", toggleSwitchContactChangeHandler)
-    }
-  }
-
+  enableToggleSwitchContactChange()
+  
   if (minutesToHeatWater == null) {
     app.updateSetting("minutesToHeatWater", 10)
     debug("Setting minutesToHeatWater to: 10")
@@ -194,16 +196,31 @@ def scheduleSetup(timeStartNextDay, weekdaysRange) {
 /****************************************************************************/
 /*  EVENT HANDLERS /*
 /****************************************************************************/
-def toggleSwitchContactChangeHandler(evt) {
-  debug("${evt.name} = ${evt.value}")
-  if (evt.value == "open" || evt.value == "off") {
+def toggleSwitchContactChange(evtValue) {
+  if (state?.toggleSwitchContactState == evtValue) {
+    return
+  }
+  state.toggleSwitchContact = evtValue
+  if (evtValue == "off") {
     // Stop heating
-    setWaterHeaterOff()
-  } else {
+    setWaterHeaterOff()   
+    toggleSwitches.each { device -> 
+      device.off()
+    }
+  } else (evtValue == "on") {
     // Start heating
     setWaterHeaterOn()
+    toggleSwitches.each { device ->
+      device.on()
+    }
   }
 }
+
+def toggleSwitchContactChangeHandler(evt) {
+  debug("${evt.name} = ${evt.value}")
+  toggleSwitchContactChange(evt.value)
+}
+
 
 def onScheduleHandlerWeekday() {
   if (holidaySwitch.currentValue("switch") == "on") {
@@ -250,12 +267,14 @@ def heatingSetpointChangeHandler(evt) {
     state.waterHeaterActive = false    
     notifyReadySwitch1.off()
     circulateWaterOff()
+    toggleSwitchContactChange("off")
   } else if (getMaxTemp() - 0.5 < currSetPoint && getMaxTemp() + 0.5 > currSetPoint) {
     debug("Smart water heater is Active (${evt.name} = ${evt.value})")
     state.waterHeaterActive = true
     state.notificationStartedSent = false
     state.notificationEndedSent = false
     circulateWaterOn()
+    toggleSwitchContactChange("on")
   }
   unschedule(updateStatusLight)
   schedule("0/2 * * * * ?", updateStatusLight)
