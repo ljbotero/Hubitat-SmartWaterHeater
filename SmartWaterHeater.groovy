@@ -314,6 +314,10 @@ def updateWaterHeaterApproxTimes() {
   if (state.timeHeaterActiveStarted > state.timeHeatingStarted) {
     // First time started heating    
     def minutesToStartWaterHeater = Math.round((now() - state.timeHeaterActiveStarted) / (60 * 1000)).toInteger()
+    if (minutesToStartWaterHeater > approxMinutesToStartWaterHeater * 4 && approxMinutesToStartWaterHeater > 0) {
+      debug("[WARNING] Not updating approxMinutesToStartWaterHeater since difference is too high: ${minutesToStartWaterHeater} > ${approxMinutesToStartWaterHeater}")
+      return;
+    }
     def rollingMinutesToStartWaterHeater = approxMinutesToStartWaterHeater - (approxMinutesToStartWaterHeater / 10)
     rollingMinutesToStartWaterHeater = rollingMinutesToStartWaterHeater + (minutesToStartWaterHeater / 10)
     // Update max variance
@@ -331,6 +335,10 @@ def updateWaterHeaterApproxTimes() {
   } else {    
     // Re-heating
     def minutesWaterHeaterStaysHot = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
+    if (minutesWaterHeaterStaysHot > approxMinutesWaterHeaterStaysHot * 4 && approxMinutesWaterHeaterStaysHot > 0) {
+      debug("[WARNING] Not updating approxMinutesWaterHeaterStaysHot since difference is too high: ${minutesWaterHeaterStaysHot} > ${approxMinutesWaterHeaterStaysHot}")
+      return;
+    }
     def rollingMinutesWaterHeaterStaysHot = approxMinutesWaterHeaterStaysHot - (approxMinutesWaterHeaterStaysHot / 10)
     rollingMinutesWaterHeaterStaysHot = rollingMinutesWaterHeaterStaysHot + (minutesWaterHeaterStaysHot / 10)
     app.updateSetting("approxMinutesWaterHeaterStaysHot", rollingMinutesWaterHeaterStaysHot)
