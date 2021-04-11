@@ -59,6 +59,10 @@ def mainPage() {
       input "notifyWhenReady1Message", title: "Notification Message", default: "Water heater has finished heating water", "string"
       input "notifyWhenReady1Modes", title: "Only notify on specific modes", multiple: true, "mode"
       input "notifyReadySwitch1", title: "Turn on when water is hot", "capability.switch"
+      input "notifyWhenErrorDevices", title: "Notify if problems are detected", multiple: true, "capability.notification"
+      input "notifyWhenErrorModes", title: "Only notify on specific modes", multiple: true, "mode"
+      input "approxMinutesToStartWaterHeater", "number", range: "0..*", title: "Approx. number of minutes for water heater to start heating", required: true, defaultValue: 5
+      input "approxMinutesWaterHeaterStaysHot", "number", range: "0..*", title: "Approx. number of minutes for water heater to stay hot", required: true, defaultValue: 15
     }
     section("<h2>Testing</h2>"){
       input "dryRun", title: "Dry-run (won't execute any device changes)", defaultValue: false, "bool"
@@ -91,7 +95,23 @@ def getMinTemp() {
 
 def setWaterHeaterOn() {
   debug("setWaterHeaterOn")
+  def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
+  debug("minutesSinceLastRan = ${minutesSinceLastRan}")
+  if (!state.isHeating && minutesSinceLastRan > approxMinutesWaterHeaterStaysHot) {
+    def runInMinutes = (approxMinutesToStartWaterHeater + state.rollingVarianceMinutesToStartWaterHeater) * 60
+    runIn(runInMinutes, "checkWaterHeaterStarted")
+    debug("checkWaterHeaterStarted in ${runInMinutes} minutes")
+  }
   if (!dryRun) { waterHeater.setHeatingSetpoint(getMaxTemp()) }
+}
+
+def checkWaterHeaterStarted() {
+  if (state.waterHeaterActive && !state.isHeating) {
+    def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
+    def notifyWhenErrorMessage = "Water heater has not started since ${minutesSinceLastRan} minutes ago"
+    sendNotifications(notifyWhenErrorDevices, notifyWhenErrorModes, notifyWhenErrorMessage)
+    debug(notifyWhenErrorMessage)
+  }  
 }
 
 def setWaterHeaterOff() {
@@ -139,6 +159,7 @@ def enableToggleSwitchContactChange() {
 
 def initialize() {
   state.testing = false //false // used to run unit tests
+  state.rollingVarianceMinutesToStartWaterHeater = 0
 
   subscribe(waterHeater, "heatingSetpoint", heatingSetpointChangeHandler)
   subscribe(waterHeater, "thermostatOperatingState", thermostatOperatingStateChangeHandler)
@@ -261,11 +282,16 @@ def onScheduleHandler() {
 }
 
 def heatingSetpointChangeHandler(evt) {
+  if (!evt.value.isNumber()) {
+    debug("[ERROR] Invalid Event Value: ${evt.value}")
+    return;
+  }
   def currSetPoint = new Float(evt.value)
   debug("${evt.name} = ${evt.value}")
   if (getMinTemp() - 0.5 < currSetPoint && getMinTemp() + 0.5 > currSetPoint) {
     debug("Smart water heater is Inactive (${evt.name} = ${evt.value})")
     state.waterHeaterActive = false    
+    state.timeHeaterActiveStarted = now()
     notifyReadySwitch1.off()
     circulateWaterOff()
     toggleSwitchChangeValue("off")
@@ -281,9 +307,41 @@ def heatingSetpointChangeHandler(evt) {
   schedule("0/2 * * * * ?", updateStatusLight)
 }
 
+def updateWaterHeaterApproxTimes() {
+  if (!state.waterHeaterActive) {
+    return
+  }
+  if (state.timeHeaterActiveStarted > state.timeHeatingStarted) {
+    // First time started heating    
+    def minutesToStartWaterHeater = Math.round((now() - state.timeHeaterActiveStarted) / (60 * 1000)).toInteger()
+    def rollingMinutesToStartWaterHeater = approxMinutesToStartWaterHeater - (approxMinutesToStartWaterHeater / 10)
+    rollingMinutesToStartWaterHeater = rollingMinutesToStartWaterHeater + (minutesToStartWaterHeater / 10)
+    // Update max variance
+    def varianceMinutesToStartWaterHeater = Math.abs(approxMinutesToStartWaterHeater - minutesToStartWaterHeater)
+    if (state?.rollingVarianceMinutesToStartWaterHeater < varianceMinutesToStartWaterHeater) {
+      state.rollingVarianceMinutesToStartWaterHeater = varianceMinutesToStartWaterHeater
+    } else {
+      state.rollingVarianceMinutesToStartWaterHeater = 
+        (state.rollingVarianceMinutesToStartWaterHeater - (state.rollingVarianceMinutesToStartWaterHeater/10)) +
+        (state.rollingVarianceMinutesToStartWaterHeater + (varianceMinutesToStartWaterHeater / 10))
+    }
+    app.updateSetting("approxMinutesToStartWaterHeater", rollingMinutesToStartWaterHeater)
+    debug("approxMinutesToStartWaterHeater: ${rollingMinutesToStartWaterHeater}")
+    debug("rollingVarianceMinutesToStartWaterHeater: ${state.rollingVarianceMinutesToStartWaterHeater}")
+  } else {    
+    // Re-heating
+    def minutesWaterHeaterStaysHot = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
+    def rollingMinutesWaterHeaterStaysHot = approxMinutesWaterHeaterStaysHot - (approxMinutesWaterHeaterStaysHot / 10)
+    rollingMinutesWaterHeaterStaysHot = rollingMinutesWaterHeaterStaysHot + (minutesWaterHeaterStaysHot / 10)
+    app.updateSetting("approxMinutesWaterHeaterStaysHot", rollingMinutesWaterHeaterStaysHot)
+    debug("approxMinutesWaterHeaterStaysHot: ${rollingMinutesWaterHeaterStaysHot}")
+  } 
+}
+
 def thermostatOperatingStateChangeHandler(evt) {
   debug("${evt.name} = ${evt.value}")
   if (evt.value == "heating") {
+    updateWaterHeaterApproxTimes()
     state.timeHeatingStarted = now()
     state.isHeating = true
     if (state?.waterHeaterActive && !state?.notificationStartedSent) {
@@ -325,10 +383,10 @@ def updateStatusLight() {
     return
   }
   if (state?.statusLightOn) {
-    debug("Turning statusLight off - toggle")
+    //debug("Turning statusLight off - toggle")
     if (!dryRun) { statusLight.off() }
   } else {
-    debug("Turning statusLight on - toggle")
+    //debug("Turning statusLight on - toggle")
     if (!dryRun) { statusLight.on() }
   }
   state.statusLightOn = !state?.statusLightOn
