@@ -61,8 +61,8 @@ def mainPage() {
       input "notifyReadySwitch1", title: "Turn on when water is hot", "capability.switch"
       input "notifyWhenErrorDevices", title: "Notify if problems are detected", multiple: true, "capability.notification"
       input "notifyWhenErrorModes", title: "Only notify on specific modes", multiple: true, "mode"
-      input "approxMinutesToStartWaterHeater", "number", range: "0..*", title: "Approx. number of minutes for water heater to start heating", required: true, defaultValue: 5
-      input "approxMinutesWaterHeaterStaysHot", "number", range: "0..*", title: "Approx. number of minutes for water heater to stay hot", required: true, defaultValue: 15
+      input "approxMinutesToStartWaterHeater", "number", range: "0..*", title: "Approx. number of minutes for water heater to start heating", required: true, defaultValue: 5.0
+      input "approxMinutesWaterHeaterStaysHot", "number", range: "0..*", title: "Approx. number of minutes for water heater to stay hot", required: true, defaultValue: 15.0
     }
     section("<h2>Testing</h2>"){
       input "dryRun", title: "Dry-run (won't execute any device changes)", defaultValue: false, "bool"
@@ -98,16 +98,16 @@ def setWaterHeaterOn() {
   def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
   debug("minutesSinceLastRan = ${minutesSinceLastRan}")
   if (!state.isHeating && minutesSinceLastRan > approxMinutesWaterHeaterStaysHot) {
-    def runInMinutes = (approxMinutesToStartWaterHeater + state.rollingVarianceMinutesToStartWaterHeater) * 60
-    runIn(runInMinutes, "checkWaterHeaterStarted")
-    debug("checkWaterHeaterStarted in ${runInMinutes} minutes")
+    def runInSeconds = ((approxMinutesToStartWaterHeater + state.rollingVarianceMinutesToStartWaterHeater) * 60).toInteger() 
+    debug("checkWaterHeaterStarted in ${runInSeconds / 60} minutes")
+    runIn(runInSeconds, "checkWaterHeaterStarted")    
   }
   if (!dryRun) { waterHeater.setHeatingSetpoint(getMaxTemp()) }
 }
 
 def checkWaterHeaterStarted() {
-  if (state.waterHeaterActive && !state.isHeating) {
-    def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
+  def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
+  if (state.waterHeaterActive && !state.isHeating && minutesSinceLastRan > approxMinutesWaterHeaterStaysHot) {
     def notifyWhenErrorMessage = "Water heater has not started since ${minutesSinceLastRan} minutes ago"
     sendNotifications(notifyWhenErrorDevices, notifyWhenErrorModes, notifyWhenErrorMessage)
     debug(notifyWhenErrorMessage)
@@ -167,8 +167,8 @@ def initialize() {
   enableToggleSwitchContactChange()
   
   if (minutesToHeatWater == null) {
-    app.updateSetting("minutesToHeatWater", 10)
     debug("Setting minutesToHeatWater to: 10")
+    app.updateSetting("minutesToHeatWater", 10)
   }
   def minTempLimit = new Float(waterHeater.getDataValue("minTemp"))
   def maxTempLimit = new Float(waterHeater.getDataValue("maxTemp"))
@@ -308,7 +308,8 @@ def heatingSetpointChangeHandler(evt) {
 }
 
 def updateWaterHeaterApproxTimes() {
-  if (!state.waterHeaterActive) {
+  if (state.waterHeaterActive == false) {
+    debug("updateWaterHeaterApproxTimes: canceled")
     return
   }
   if (state.timeHeaterActiveStarted > state.timeHeatingStarted) {
@@ -329,9 +330,9 @@ def updateWaterHeaterApproxTimes() {
         (state.rollingVarianceMinutesToStartWaterHeater - (state.rollingVarianceMinutesToStartWaterHeater/10)) +
         (state.rollingVarianceMinutesToStartWaterHeater + (varianceMinutesToStartWaterHeater / 10))
     }
-    app.updateSetting("approxMinutesToStartWaterHeater", rollingMinutesToStartWaterHeater)
     debug("approxMinutesToStartWaterHeater: ${rollingMinutesToStartWaterHeater}")
     debug("rollingVarianceMinutesToStartWaterHeater: ${state.rollingVarianceMinutesToStartWaterHeater}")
+    app.updateSetting("approxMinutesToStartWaterHeater", rollingMinutesToStartWaterHeater.toInteger())
   } else {    
     // Re-heating
     def minutesWaterHeaterStaysHot = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
@@ -341,14 +342,15 @@ def updateWaterHeaterApproxTimes() {
     }
     def rollingMinutesWaterHeaterStaysHot = approxMinutesWaterHeaterStaysHot - (approxMinutesWaterHeaterStaysHot / 10)
     rollingMinutesWaterHeaterStaysHot = rollingMinutesWaterHeaterStaysHot + (minutesWaterHeaterStaysHot / 10)
-    app.updateSetting("approxMinutesWaterHeaterStaysHot", rollingMinutesWaterHeaterStaysHot)
     debug("approxMinutesWaterHeaterStaysHot: ${rollingMinutesWaterHeaterStaysHot}")
+    app.updateSetting("approxMinutesWaterHeaterStaysHot", rollingMinutesWaterHeaterStaysHot.toInteger())
   } 
 }
 
 def thermostatOperatingStateChangeHandler(evt) {
   debug("${evt.name} = ${evt.value}")
   if (evt.value == "heating") {
+    unschedule("checkWaterHeaterStarted")
     updateWaterHeaterApproxTimes()
     state.timeHeatingStarted = now()
     state.isHeating = true
@@ -409,9 +411,9 @@ def onFinishedHeatingWater(minutesToRunAfter) {
     state.minutesHeating = Math.round((state.timeHeatingEnded - state.timeHeatingStarted) / (60 * 1000)).toInteger()
     // Assuming 5 is the minimum it takes to heat the water from min temp and 60 is the max time it could take
     if (state.minutesHeating > 5 && state.minutesHeating < 60) {
-      app.updateSetting("minutesToHeatWater", state.minutesHeating)
       debug("Updating minutesToHeatWater to: ${state.minutesHeating}")
       runInMillis(5000, "initSchedule") // Wait a bit to ensure minutesToHeatWater is already persisted
+      app.updateSetting("minutesToHeatWater", state.minutesHeating)
     }
   }
   // Calculate for how much longer keep it running
