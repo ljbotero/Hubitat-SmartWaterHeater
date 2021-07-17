@@ -44,6 +44,7 @@ def mainPage() {
       input "minutesToRunAfterHeatedManually", "number", range: "0..*", title: "Minutes to keep water hot after manually activated", required: true, defaultValue: 30
       input "minutesToHeatWater", range: "0..*", title: "Estimated number of minutes it takes to heat water", "number"
       input "estimateMinutesToHeatWater", title: "Automatically estimate minutes it takes to heat water", defaultValue: true, "bool"
+      input "minutesToReHeatWater", range: "0..*", title: "Estimated number of minutes it takes to re-heat water", "number", defaultValue: 2
     }
     section("<h2>Control & Status</h2>"){
       input "circulationSwitch", title: "Switch to turn when water heater is active (typically used for water circulation)", "capability.switch"
@@ -95,6 +96,9 @@ def getMinTemp() {
 
 def setWaterHeaterOn() {
   debug("setWaterHeaterOn")
+  state.timeHeatingStarted = now()
+  state.timeHeatingEnded = state.timeHeatingStarted
+
   def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
   debug("minutesSinceLastRan = ${minutesSinceLastRan}")
   if (!state.isHeating && minutesSinceLastRan > approxMinutesWaterHeaterStaysHot) {
@@ -300,6 +304,7 @@ def heatingSetpointChangeHandler(evt) {
     state.waterHeaterActive = true
     state.notificationStartedSent = false
     state.notificationEndedSent = false
+    state.longShowerDetected = false
     circulateWaterOn()
     toggleSwitchChangeValue("on")
   }
@@ -347,11 +352,22 @@ def updateWaterHeaterApproxTimes() {
   } 
 }
 
+def setWaterHeaterOffAuto() {
+    debug("setWaterHeaterOffAuto")
+    state.longShowerDetected = true
+    setWaterHeaterOff()
+}
+
 def thermostatOperatingStateChangeHandler(evt) {
   debug("${evt.name} = ${evt.value}")
   if (evt.value == "heating") {
     unschedule("checkWaterHeaterStarted")
     updateWaterHeaterApproxTimes()
+    debug("thermostatOperatingStateChangeHandler: startedOnSchedule=${state?.startedOnSchedule}, state?.waterHeaterActive=${state?.waterHeaterActive}, timeHeatingEnded=${state.timeHeatingEnded}, timeHeatingStarted=${state.timeHeatingStarted}")
+    if (!state?.startedOnSchedule && state?.waterHeaterActive && state?.timeHeatingEnded > state?.timeHeatingStarted) {
+        debug("setWaterHeaterOffAuto: ${minutesToReHeatWater}, state.timeHeatingEnded ${state.timeHeatingEnded}, state.timeHeatingStarted: ${state.timeHeatingStarted}")
+        runIn(minutesToReHeatWater * 60, "setWaterHeaterOffAuto")
+    }
     state.timeHeatingStarted = now()
     state.isHeating = true
     if (state?.waterHeaterActive && !state?.notificationStartedSent) {
@@ -360,6 +376,7 @@ def thermostatOperatingStateChangeHandler(evt) {
     }
     debug("Started at ${new Date()}")
   } else {
+    unschedule("setWaterHeaterOffAuto");
     state.timeHeatingEnded = now()
     state.isHeating = false
     if (state?.startedOnSchedule) {
@@ -403,39 +420,40 @@ def updateStatusLight() {
 }
 
 def onFinishedHeatingWater(minutesToRunAfter) {
-  if (!state?.waterHeaterActive) {
-    return
-  }
-  if (estimateMinutesToHeatWater && state?.startedOnSchedule) {
-    // Update estimate
-    state.minutesHeating = Math.round((state.timeHeatingEnded - state.timeHeatingStarted) / (60 * 1000)).toInteger()
-    // Assuming 5 is the minimum it takes to heat the water from min temp and 60 is the max time it could take
-    if (state.minutesHeating > 5 && state.minutesHeating < 60) {
-      debug("Updating minutesToHeatWater to: ${state.minutesHeating}")
-      runInMillis(5000, "initSchedule") // Wait a bit to ensure minutesToHeatWater is already persisted
-      app.updateSetting("minutesToHeatWater", state.minutesHeating)
+  if (state?.waterHeaterActive) {
+    if (estimateMinutesToHeatWater && state?.startedOnSchedule) {
+      // Update estimate
+      state.minutesHeating = Math.round((state.timeHeatingEnded - state.timeHeatingStarted) / (60 * 1000)).toInteger()
+      // Assuming 5 is the minimum it takes to heat the water from min temp and 60 is the max time it could take
+      if (state.minutesHeating > 5 && state.minutesHeating < 60) {
+        debug("Updating minutesToHeatWater to: ${state.minutesHeating}")
+        runInMillis(5000, "initSchedule") // Wait a bit to ensure minutesToHeatWater is already persisted
+        app.updateSetting("minutesToHeatWater", state.minutesHeating)
+      }
     }
-  }
-  // Calculate for how much longer keep it running
-  if (state?.startedOnSchedule) {
-    def endTimeMillis = state.targetTime + (minutesToRunAfter * 60 * 1000)
-    if (endTimeMillis < now()) {
-      state.waitMinsUntilShutOff = 0
-      setWaterHeaterOff();
+    // Calculate for how much longer keep it running
+    if (state?.startedOnSchedule) {
+      def endTimeMillis = state.targetTime + (minutesToRunAfter * 60 * 1000)
+      if (endTimeMillis < now()) {
+        state.waitMinsUntilShutOff = 0
+        setWaterHeaterOff();
+      } else {
+        def waitMillis = endTimeMillis - now()
+        state.waitMinsUntilShutOff = Math.round(waitMillis / (60 * 1000)).toInteger()
+        runInMillis(waitMillis, "setWaterHeaterOff")
+        debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
+      }
     } else {
-      def waitMillis = endTimeMillis - now()
-      state.waitMinsUntilShutOff = Math.round(waitMillis / (60 * 1000)).toInteger()
-      runInMillis(waitMillis, "setWaterHeaterOff")
+      runIn(minutesToRunAfter * 60, "setWaterHeaterOff")
       debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
     }
-  } else {
-    def waitMillis = minutesToRunAfter * 60 * 1000
-    runInMillis(waitMillis, "setWaterHeaterOff")
-    debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
-  }
-  // Notify
-  if (!state?.notificationEndedSent) {
-    sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message)
+  } else if (!state?.notificationEndedSent) {
+    // Notify
+    if (state.longShowerDetected) {
+        sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message + " (Auto)")
+    } else {
+        sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message)
+    }
     notifyReadySwitch1.on()
     state.notificationEndedSent = true
   }
