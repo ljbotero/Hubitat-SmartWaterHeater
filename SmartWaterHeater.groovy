@@ -46,7 +46,7 @@ def mainPage() {
       input "estimateMinutesToHeatWater", title: "Automatically estimate minutes it takes to heat water from cold", defaultValue: true, "bool"
       input "minutesToHeatWater", range: "0..*", title: "Estimated number of minutes it takes to heat water from cold (for next day planning)", "number"
       input "minutesToReHeatWater", range: "0..*", title: "Estimated number of minutes it takes to re-heat water from hot (for long shower detection)", "number", defaultValue: 2
-      input "maxMinutesWaterHeaterStaysHot", "number", range: "10..*", title: "Max number of minutes for water to stay hot (for malfunction detection)", required: true, defaultValue: 15.0
+      input "maxMinutesWaterHeaterStaysHot", "number", range: "0..*", title: "Max number of minutes for water to stay hot (for malfunction detection)", required: true, defaultValue: 15.0
     }
     section("<h2>Control & Status</h2>"){
       input "turnOnWhenWaterIsHot", title: "Turn on when water is hot", "capability.switch"
@@ -100,30 +100,26 @@ def getMinTemp() {
 
 def setWaterHeaterOn() {
   debug("setWaterHeaterOn")
-  state.timeHeatingStarted = now()
-  state.timeHeatingEnded = state.timeHeatingStarted
-
   def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
-  debug("minutesSinceLastRan = ${minutesSinceLastRan}")
-  if (!state.isHeating && minutesSinceLastRan > maxMinutesWaterHeaterStaysHot) {
-    def runInSeconds = ((approxMinutesToStartWaterHeater + state.rollingVarianceMinutesToStartWaterHeater) * 60).toInteger() 
-    debug("checkWaterHeaterStarted in ${runInSeconds / 60} minutes")
-    runIn(runInSeconds, "checkWaterHeaterStarted")    
+  debug("minutesSinceLastRan = ${minutesSinceLastRan}, maxMinutesWaterHeaterStaysHot = ${maxMinutesWaterHeaterStaysHot}")
+  def runInMinutes = (approxMinutesToStartWaterHeater + state.rollingVarianceMinutesToStartWaterHeater).toInteger() 
+  if (!state.isHeating && minutesSinceLastRan >= maxMinutesWaterHeaterStaysHot && runInMinutes > 0) {
+    debug("checkWaterHeaterStarted in ${runInMinutes} minutes")
+    runIn(runInMinutes * 60, "checkWaterHeaterStarted")    
   }
   if (!dryRun) { waterHeater.setHeatingSetpoint(getMaxTemp()) }
 }
 
 def checkWaterHeaterStarted() {
-  def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
-  if (state.waterHeaterActive && !state.isHeating && minutesSinceLastRan > maxMinutesWaterHeaterStaysHot) {
+    def minutesSinceLastRan = (approxMinutesToStartWaterHeater + state.rollingVarianceMinutesToStartWaterHeater).toInteger() 
     def notifyWhenErrorMessage = "Water heater has not started since ${minutesSinceLastRan} minutes ago"
     sendNotifications(notifyWhenErrorDevices, notifyWhenErrorModes, notifyWhenErrorMessage)
     debug(notifyWhenErrorMessage)
-  }  
 }
 
 def setWaterHeaterOff() {
   debug("setWaterHeaterOff")
+  unschedule(checkWaterHeaterStarted)
   if (!dryRun) { waterHeater.setHeatingSetpoint(getMinTemp()) }
 }
 
@@ -167,7 +163,13 @@ def enableToggleSwitchContactChange() {
 
 def initialize() {
   state.testing = dryRun //false // used to run unit tests
+
+  state.timeHeatingEnded = now()
   state.rollingVarianceMinutesToStartWaterHeater = 0
+  state.timeHeaterActiveStarted = now()
+  state.timeHeatingStarted = now()
+  state.waterHeaterActive = false
+  state.startedOnSchedule = false
 
   subscribe(waterHeater, "heatingSetpoint", heatingSetpointChangeHandler)
   subscribe(waterHeater, "thermostatOperatingState", thermostatOperatingStateChangeHandler)
@@ -237,14 +239,18 @@ def toggleSwitchChangeValue(evtValue) {
   if (evtValue == "off") {
     // Stop heating
     setWaterHeaterOff()   
-    toggleSwitches.each { device -> 
-      device.off()
+    if (toggleSwitches != null) {
+      toggleSwitches.each { device -> 
+        device.off()
+      }
     }
   } else {
     // Start heating
     setWaterHeaterOn()
-    toggleSwitches.each { device ->
-      device.on()
+    if (toggleSwitches != null) {
+      toggleSwitches.each { device ->
+        device.on()
+      }
     }
   }
   debug("toggleSwitchChangeValue = ${evtValue}")
@@ -257,7 +263,7 @@ def toggleSwitchContactChangeHandler(evt) {
 
 
 def onScheduleHandlerWeekday() {
-  if (holidaySwitch.currentValue("switch") == "on") {
+  if (holidaySwitch != null && holidaySwitch.currentValue("switch") == "on") {
     debug("Running schedule for Holiday")
     state.targetTime = timeToday(timeStartNextWeekend).getTime()
     def targetWaitMillis = (state.targetTime - (minutesToHeatWater * 60 * 1000)) - now()
@@ -304,7 +310,9 @@ def heatingSetpointChangeHandler(evt) {
     debug("Smart water heater is Inactive (${evt.name} = ${evt.value})")
     state.waterHeaterActive = false    
     state.timeHeaterActiveStarted = now()
-    turnOnWhenWaterIsHot.off()
+    if (turnOnWhenWaterIsHot != null) {
+        turnOnWhenWaterIsHot.off()
+    }
     circulateWaterOff()
     toggleSwitchChangeValue("off")
   } else if (getMaxTemp() - 0.5 < currSetPoint && getMaxTemp() + 0.5 > currSetPoint) {
@@ -370,7 +378,7 @@ def setWaterHeaterOffAuto() {
 def thermostatOperatingStateChangeHandler(evt) {
   debug("${evt.name} = ${evt.value}")
   if (evt.value == "heating") {
-    unschedule("checkWaterHeaterStarted")
+    unschedule(checkWaterHeaterStarted)
     updateWaterHeaterApproxTimes()
     //debug("thermostatOperatingStateChangeHandler: startedOnSchedule=${state.startedOnSchedule}, state.waterHeaterActive=${state.waterHeaterActive}, timeHeatingEnded=${state.timeHeatingEnded}, timeHeatingStarted=${state.timeHeatingStarted}")
     if (!state.startedOnSchedule && state.waterHeaterActive 
@@ -387,7 +395,7 @@ def thermostatOperatingStateChangeHandler(evt) {
     }
     debug("Started at ${new Date()}")
   } else {
-    unschedule("setWaterHeaterOffAuto");
+    unschedule(setWaterHeaterOffAuto);
     state.timeHeatingEnded = now()
     state.isHeating = false
     if (state.startedOnSchedule) {
@@ -408,7 +416,7 @@ def updateStatusLight() {
     unschedule(updateStatusLight)
     return;
   }
-  if (!state.waterHeaterActive) {
+  if (state.waterHeaterActive == false) {
     unschedule(updateStatusLight)
     debug("Turning statusLight off")
     if (!dryRun) { statusLight.off() }
@@ -431,7 +439,7 @@ def updateStatusLight() {
 }
 
 def onFinishedHeatingWater(minutesToRunAfter) {
-  if (!state.waterHeaterActive) {
+  if (state.waterHeaterActive ==  false) {
       return
   }
   if (estimateMinutesToHeatWater && state.startedOnSchedule) {
@@ -462,7 +470,9 @@ def onFinishedHeatingWater(minutesToRunAfter) {
   }
   if (!state.notificationEndedSent) {
     sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message)
-    turnOnWhenWaterIsHot.on()
+    if (turnOnWhenWaterIsHot != null) {
+      turnOnWhenWaterIsHot.on()
+    }
     state.notificationEndedSent = true
   }
 }
