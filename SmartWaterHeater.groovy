@@ -107,6 +107,7 @@ def setWaterHeaterOn() {
     unschedule(checkWaterHeaterStarted)
     runIn(runInMinutes * 60, "checkWaterHeaterStarted")    
   }
+  scheduleShutOff()
   if (!dryRun) { waterHeater.setHeatingSetpoint(getMaxTemp()) }
 }
 
@@ -120,12 +121,13 @@ def checkWaterHeaterStarted() {
 def setWaterHeaterOff() {
   debug("setWaterHeaterOff")
   unschedule(checkWaterHeaterStarted)
+  state.startedOnSchedule = false
   if (!dryRun) { waterHeater.setHeatingSetpoint(getMinTemp()) }
 }
 
 def circulateWaterOn() {
   if (!dryRun && circulationSwitch != null) {
-    circulationSwitch.on()
+    circulationSwitch.on()    
     debug("Circulation switch on")
   }
 }
@@ -401,12 +403,7 @@ def thermostatOperatingStateChangeHandler(evt) {
   } else {
     state.timeHeatingEnded = now()
     state.isHeating = false
-    if (state.startedOnSchedule) {
-      onFinishedHeatingWater(minutesToRunAfterHeated)
-    } else {
-      onFinishedHeatingWater(minutesToRunAfterHeatedManually)
-    }
-    state.startedOnSchedule = false
+    onFinishedHeatingWater()
     state.firstHeatingComplete = true
     debug("Ended at ${new Date()}")
   }
@@ -442,7 +439,21 @@ def updateStatusLight() {
   state.statusLightOn = !state.statusLightOn
 }
 
-def onFinishedHeatingWater(minutesToRunAfter) {
+def scheduleShutOff() {
+  // Calculate for how much longer keep it running
+  def waitMillis = (minutesToHeatWater + minutesToRunAfterHeatedManually) * 60 * 1000
+  if (state.startedOnSchedule) {
+    waitMillis = (minutesToHeatWater + minutesToRunAfterHeated) * 60 * 1000
+  }
+
+  unschedule(setWaterHeaterOff)
+  runInMillis(waitMillis, "setWaterHeaterOff")
+
+  state.waitMinsUntilShutOff = Math.round(waitMillis / (60 * 1000)).toInteger()
+  debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
+}
+
+def onFinishedHeatingWater() {
   if (state.waterHeaterActive ==  false) {
       return
   }
@@ -456,24 +467,6 @@ def onFinishedHeatingWater(minutesToRunAfter) {
       runInMillis(5000, "initSchedule") // Wait a bit to ensure minutesToHeatWater is already persisted
       app.updateSetting("minutesToHeatWater", state.minutesHeating)
     }
-  }
-  // Calculate for how much longer keep it running
-  if (state.startedOnSchedule) {
-    def endTimeMillis = state.targetTime + (minutesToRunAfter * 60 * 1000)
-    if (endTimeMillis < now()) {
-      state.waitMinsUntilShutOff = 0
-      setWaterHeaterOff();
-    } else {
-      def waitMillis = endTimeMillis - now()
-      state.waitMinsUntilShutOff = Math.round(waitMillis / (60 * 1000)).toInteger()
-      unschedule(setWaterHeaterOff)
-      runInMillis(waitMillis, "setWaterHeaterOff")
-      debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
-    }
-  } else {
-    unschedule(setWaterHeaterOff)
-    runIn(minutesToRunAfter * 60, "setWaterHeaterOff")
-    debug("Wait ${state.waitMinsUntilShutOff} minutes until turning water heater off")
   }
   if (!state.notificationEndedSent) {
     sendNotifications(notifyWhenReady1Devices, notifyWhenReady1Modes, notifyWhenReady1Message)
@@ -508,28 +501,28 @@ def notificationTest() {
 }
 
 def onFinishedHeatingWaterTest() {
-  state.waterHeaterActive = true
-  state.startedOnSchedule = true
-  state.timeHeatingStarted = 1608413794070
-  state.timeHeatingEnded = 1608415254031
-  state.targetTime = now() + (20 * 60 * 1000)
-  onFinishedHeatingWater(10)
+  // state.waterHeaterActive = true
+  // state.startedOnSchedule = true
+  // state.timeHeatingStarted = 1608413794070
+  // state.timeHeatingEnded = 1608415254031
+  // state.targetTime = now() + (20 * 60 * 1000)
+  // onFinishedHeatingWater(10)
 
-  // Unit test: Updating extimate
-  if (state.minutesHeating != 24) {
-    log.error("Failed unit test - onFinishedHeatingWaterTest - Updating extimate");
-  }
+  // // Unit test: Updating extimate
+  // if (state.minutesHeating != 24) {
+  //   log.error("Failed unit test - onFinishedHeatingWaterTest - Updating extimate");
+  // }
 
-  // Unit test: Keep it running for 10 minute, but still 20 minutes until reahing the target time
-  if (state.waitMinsUntilShutOff != 30) {
-    log.error("Failed unit test - onFinishedHeatingWaterTest -  Keep it running for 10 minute, but still 20 minutes until reahing the target time (state.waitMinsUntilShutOff=${state.waitMinsUntilShutOff})");
-  }
+  // // Unit test: Keep it running for 10 minute, but still 20 minutes until reahing the target time
+  // if (state.waitMinsUntilShutOff != 30) {
+  //   log.error("Failed unit test - onFinishedHeatingWaterTest -  Keep it running for 10 minute, but still 20 minutes until reahing the target time (state.waitMinsUntilShutOff=${state.waitMinsUntilShutOff})");
+  // }
 
-  state.targetTime = now() - (9 * 60 * 1000)
-  onFinishedHeatingWater(10)
-  // Unit test: Keep it running for 10 minute, but it passed 9 minutes ago
-  if (state.waitMinsUntilShutOff != 1) {
-    log.error("Failed unit test - onFinishedHeatingWaterTest - Keep it running for 10 minute, but it passed 9 minutes ago (state.waitMinsUntilShutOff=${state.waitMinsUntilShutOff})");
-  }
+  // state.targetTime = now() - (9 * 60 * 1000)
+  // onFinishedHeatingWater(10)
+  // // Unit test: Keep it running for 10 minute, but it passed 9 minutes ago
+  // if (state.waitMinsUntilShutOff != 1) {
+  //   log.error("Failed unit test - onFinishedHeatingWaterTest - Keep it running for 10 minute, but it passed 9 minutes ago (state.waitMinsUntilShutOff=${state.waitMinsUntilShutOff})");
+  // }
 
 }
