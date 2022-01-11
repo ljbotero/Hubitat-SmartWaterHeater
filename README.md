@@ -1,5 +1,5 @@
 # Hubitat-SmartWaterHeater
-Hubitat (and SmartThings) app to control water heater and minimize use of gas or electricity by minimizing its use
+This is Hubitat (and SmartThings) app for controlling water heaters and reducing gas or electricity usage
 
 ![alt text](https://raw.githubusercontent.com/ljbotero/Hubitat-SmartWaterHeater/main/SmartWaterHeaterSettings.png)
 
