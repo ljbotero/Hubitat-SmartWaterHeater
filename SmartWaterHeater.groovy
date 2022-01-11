@@ -44,7 +44,6 @@ def mainPage() {
       input "minutesToRunAfterHeatedManually", "number", range: "0..*", title: "Minutes to keep water hot after manually activated", required: true, defaultValue: 30
       input "estimateMinutesToHeatWater", title: "Automatically estimate minutes it takes to heat water from cold", defaultValue: true, "bool"
       input "minutesToHeatWater", range: "0..*", title: "Estimated number of minutes it takes to heat water from cold (for next day planning)", "number"
-      input "minutesToReHeatWater", range: "0..*", title: "Estimated number of minutes it takes to re-heat water from hot (for long shower detection)", "number", defaultValue: 2
     }
     section("<h2>Control & Status</h2>"){
       input "turnOnWhenWaterIsHot", title: "Turn on when water is hot", "capability.switch"
@@ -52,7 +51,14 @@ def mainPage() {
       input "statusLight", title: "Status light (blinks when heating / solid when ready)", "capability.switch"
       input "toggleSwitches", title: "On/Off switch to manually initiate heater", multiple: true, "capability.switch"
       input "holidaySwitch", title: "Switch that is turned-on on holidays (i.e. <a href='https://github.com/dcmeglio/hubitat-holidayswitcher'>hubitat-holidayswitcher</a>)", "capability.switch"
+    }
+    section("<h3>Long Shower Detection</h3>"){
       input "enableAutoShutOffWhenLongShowerDetected", title: "Enable auto-shut off when long shower detected", defaultValue: true, "bool"
+      input "waterFlowDevice", title: "Water Flow Sensor", multiple: true, "capability.liquidFlowRate"
+      input "maxShowerDurationInMinutes", range: "2..60", title: "Max shower duration in minutes", "number", defaultValue: 6
+      input "notifyWhenLongShowerDetectedDevices", title: "Notify when long shower detected", multiple: true, "capability.notification"
+      input "notifyWhenLongShowerDetectedMessage", title: "Notification Message", default: "Auto shut-off activated after heating water for #minutes# minutes", "string"
+      input "notifyWhenLongShowerDetectedModes", title: "Notify Only on specific modes", multiple: true, "mode"
     }
     section("<h2>Notifications</h2>"){
       input "notifyWhenStart1Devices", title: "Notify when water heater starts", multiple: true, "capability.notification"
@@ -63,9 +69,6 @@ def mainPage() {
       input "notifyWhenReady1Modes", title: "Only notify on specific modes", multiple: true, "mode"
       input "notifyWhenErrorDevices", title: "Notify if problems are detected", multiple: true, "capability.notification"
       input "notifyWhenErrorModes", title: "Only notify on specific modes", multiple: true, "mode"
-      input "notifyWhenLongShowerDetectedDevices", title: "Notify when long shower detected", multiple: true, "capability.notification"
-      input "notifyWhenLongShowerDetectedMessage", title: "Notification Message", default: "Auto shut-off activated after heating water for #minutes# minutes", "string"
-      input "notifyWhenLongShowerDetectedModes", title: "Only notify on specific modes", multiple: true, "mode"
     }
     section("<h2>Testing</h2>"){
       input "dryRun", title: "Dry-run (won't execute any device changes)", defaultValue: false, "bool"
@@ -98,7 +101,6 @@ def getMinTemp() {
 
 def setWaterHeaterOn() {
   debug("setWaterHeaterOn")
-  state.firstHeatingComplete = false
   def minutesSinceLastRan = Math.round((now() - state.timeHeatingEnded) / (60 * 1000)).toInteger()
   debug("minutesSinceLastRan = ${minutesSinceLastRan}, maxMinutesWaterHeaterStaysHot = ${state.maxMinutesWaterHeaterStaysHot}")
   def runInMinutes = (state.approxMinutesToStartWaterHeater + state.rollingVarianceMinutesToStartWaterHeater).toInteger() 
@@ -172,12 +174,12 @@ def initialize() {
   state.timeHeatingStarted = now()
   state.waterHeaterActive = false
   state.startedOnSchedule = false
-  state.firstHeatingComplete = false
   state.maxMinutesWaterHeaterStaysHot = 15
   state.approxMinutesToStartWaterHeater = 10
 
   subscribe(waterHeater, "heatingSetpoint", heatingSetpointChangeHandler)
   subscribe(waterHeater, "thermostatOperatingState", thermostatOperatingStateChangeHandler)
+  subscribe(waterFlowDevice, "rate", liquidFlowRateHandler)
   
   enableToggleSwitchContactChange()
   
@@ -372,11 +374,28 @@ def updateWaterHeaterApproxTimes() {
 }
 
 def setWaterHeaterOffAuto() {
-  debug("setWaterHeaterOffAuto")
+  debug("Long shower detected - Shutting water heater off")
   setWaterHeaterOff()
   def minutesSinceHeating = Math.round((now() - state.timeHeatingStarted) / (60 * 1000)).toString()
   def notificationMessage = notifyWhenLongShowerDetectedMessage.replace("#minutes#", minutesSinceHeating)
   sendNotifications(notifyWhenLongShowerDetectedDevices, notifyWhenLongShowerDetectedModes, notificationMessage)
+}
+
+def liquidFlowRateHandler(evt) {
+  debug("${evt.name} = ${evt.value}")
+  if (!enableAutoShutOffWhenLongShowerDetected) {
+    return
+  }
+  if (!state.waterHeaterActive || evt.value < 5) {
+    unschedule(setWaterHeaterOffAuto)
+    return
+  }
+  if (!state?.scheduleAutoOff) {
+    state.scheduleAutoOff = true
+    debug("Long shower detector started counting time")
+    runIn(maxShowerDurationInMinutes * 60, "setWaterHeaterOffAuto")
+  }
+
 }
 
 def thermostatOperatingStateChangeHandler(evt) {
@@ -385,14 +404,6 @@ def thermostatOperatingStateChangeHandler(evt) {
   if (evt.value == "heating") {
     unschedule(checkWaterHeaterStarted)
     updateWaterHeaterApproxTimes()
-    if (!state.startedOnSchedule && state.waterHeaterActive && enableAutoShutOffWhenLongShowerDetected) {
-      if (state?.firstHeatingComplete && minutesToReHeatWater > 0) {
-          debug("setWaterHeaterOffAuto: ${minutesToReHeatWater}, state.timeHeatingEnded ${state.timeHeatingEnded}, state.timeHeatingStarted: ${state.timeHeatingStarted}")
-          runIn(minutesToReHeatWater * 60, "setWaterHeaterOffAuto")
-      } else if (!state?.firstHeatingComplete && minutesToHeatWater > 0) {
-          runIn(minutesToHeatWater * 60 * 2, "setWaterHeaterOffAuto")
-      }
-    }
     state.timeHeatingStarted = now()
     state.isHeating = true
     if (state.waterHeaterActive && !state.notificationStartedSent) {
@@ -404,7 +415,6 @@ def thermostatOperatingStateChangeHandler(evt) {
     state.timeHeatingEnded = now()
     state.isHeating = false
     onFinishedHeatingWater()
-    state.firstHeatingComplete = true
     debug("Ended at ${new Date()}")
   }
   unschedule(updateStatusLight)
