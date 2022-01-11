@@ -1,7 +1,7 @@
 # Hubitat-SmartWaterHeater
 Hubitat (and SmartThings) app to control water heater and minimize use of gas or electricity by minimizing its use
 
-![alt text](https://github.com/ljbotero/Hubitat-SmartWaterHeater/blob/main/SmartWaterHeaterSettings?raw=true)
+![alt text](https://raw.githubusercontent.com/ljbotero/Hubitat-SmartWaterHeater/main/SmartWaterHeaterSettings.png)
 
 It incorporates support for water flow sensor.
 
