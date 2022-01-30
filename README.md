@@ -4,10 +4,15 @@ Features:
 1. Schedule maximum shower duration to prevent people taking extremely long showers (you're welcome parents!)
 1. Shower counter used to shut down water heater inmediatelly after last person showers
 1. Schedule start time for weekday and weekends (or holidays)
-1. Support for [Holiday Switcher](https://github.com/dcmeglio/hubitat-holidayswitcher) 
 1. Automatically schedules best time to initiate water heating based on statistics from previous days
 1. Support for external manual override switch to turn on/off water heater
 1. Support for optional water-circulator that turns on/of along with water heater
+
+## Setup instructions
+- Comming soon!
+
+### External References
+- Uses [Holiday Switcher](https://github.com/dcmeglio/hubitat-holidayswitcher) and [Hubitat-Rheem](https://github.com/dcmeglio/hubitat-rheem) by Dominick Meglio
 
 ## Hardware Architecture
 ![Architecture](https://raw.githubusercontent.com/ljbotero/Hubitat-SmartWaterHeater/main/Hubitat%20Smart%20Water%20Heater.drawio.png)
