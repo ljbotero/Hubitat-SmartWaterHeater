@@ -12,7 +12,19 @@ Features:
 - Comming soon!
 
 ### External References
-- Uses [Holiday Switcher](https://github.com/dcmeglio/hubitat-holidayswitcher) and [Hubitat-Rheem](https://github.com/dcmeglio/hubitat-rheem) by Dominick Meglio
+
+#### Hardware
+- [Rheem EcoNet Home Comfort WiFi Module for Gas Heaters (part REWRA631GWH)](https://www.amazon.com/gp/product/B00NOH3HK6)
+- Bradford White Accessory Module Kit (part WHACCPKG1005)
+- [Connecting Bradford White Accessory Module Kit to Rheem EcoNet Home Comfort WiFi Module](https://forums.raspberrypi.com/viewtopic.php?t=136314#p1696852)
+- [G3/4" Hall Effect Liquid Water Flow Sensor](https://www.amazon.com/dp/B07DLZH8P2)
+
+#### Software
+- [ESP8266 Running with BotHouse IoT Framework](https://github.com/ljbotero/BotHouse)
+  - [Config for Water Flow Sensor](https://github.com/ljbotero/BotHouse/blob/main/Arduino/data-dev/config_water_flow.json)
+  - [Config for On/Off Switch](https://github.com/ljbotero/BotHouse/blob/main/Arduino/data-dev/config_on_off_switch.json)
+- [Holiday Switcher by Dominick Meglio](https://github.com/dcmeglio/hubitat-holidayswitcher)
+- [Hubitat-Rheem by Dominick Meglio](https://github.com/dcmeglio/hubitat-rheem)
 
 ## Hardware Architecture
 ![Architecture](https://raw.githubusercontent.com/ljbotero/Hubitat-SmartWaterHeater/main/Hubitat%20Smart%20Water%20Heater.drawio.png)
