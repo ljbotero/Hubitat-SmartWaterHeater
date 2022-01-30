@@ -7,6 +7,8 @@ Features:
 1. Automatically schedules best time to initiate water heating based on statistics from previous days
 1. Support for external manual override switch to turn on/off water heater
 1. Support for optional water-circulator that turns on/of along with water heater
+1. Water heater malfunction detection
+1. Notify when water heater starts, ends, detects shower, or malfunctions
 
 ## Setup instructions
 - Comming soon!
@@ -14,6 +16,7 @@ Features:
 ### External References
 
 #### Hardware
+- [Hubitat Elevation Hub](https://hubitat.com/products)
 - [Rheem EcoNet Home Comfort WiFi Module for Gas Heaters (part REWRA631GWH)](https://www.amazon.com/gp/product/B00NOH3HK6)
 - Bradford White Accessory Module Kit (part WHACCPKG1005)
 - [Connecting Bradford White Accessory Module Kit to Rheem EcoNet Home Comfort WiFi Module](https://forums.raspberrypi.com/viewtopic.php?t=136314#p1696852)
