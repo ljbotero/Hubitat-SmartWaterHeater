@@ -132,7 +132,7 @@ def setWaterHeaterOn() {
     debug("setWaterHeaterOn")
     def minutesSinceLastRan = Math.round((now() - atomicState.timeHeatingEnded) / (60 * 1000)).toInteger()
     debug("minutesSinceLastRan = ${minutesSinceLastRan}, maxMinutesWaterHeaterStaysHot = ${atomicState.maxMinutesWaterHeaterStaysHot}")
-    if (atomicState.rollingVarianceMinutesToStartWaterHeater > 100) {
+    if (atomicState.rollingVarianceMinutesToStartWaterHeater > 30) {
         atomicState.rollingVarianceMinutesToStartWaterHeater = 0
     }
     def runInMinutes = (atomicState.approxMinutesToStartWaterHeater + atomicState.rollingVarianceMinutesToStartWaterHeater).toInteger() 
@@ -431,15 +431,12 @@ def updateWaterHeaterApproxTimes() {
         atomicState.approxMinutesToStartWaterHeater = atomicState.approxMinutesToStartWaterHeater + (minutesToStartWaterHeater / 10)
         // Update max variance
         def varianceMinutesToStartWaterHeater = Math.abs(atomicState.approxMinutesToStartWaterHeater - minutesToStartWaterHeater)
-        if (atomicState.rollingVarianceMinutesToStartWaterHeater < varianceMinutesToStartWaterHeater) {
+        if (atomicState.rollingVarianceMinutesToStartWaterHeater < varianceMinutesToStartWaterHeater || atomicState.rollingVarianceMinutesToStartWaterHeater > 30) {
             atomicState.rollingVarianceMinutesToStartWaterHeater = varianceMinutesToStartWaterHeater
         } else {
             atomicState.rollingVarianceMinutesToStartWaterHeater = 
                 (atomicState.rollingVarianceMinutesToStartWaterHeater - (atomicState.rollingVarianceMinutesToStartWaterHeater/10)) +
                 (atomicState.rollingVarianceMinutesToStartWaterHeater + (varianceMinutesToStartWaterHeater / 10))
-        }
-        if (atomicState.rollingVarianceMinutesToStartWaterHeater > 100) {
-            atomicState.rollingVarianceMinutesToStartWaterHeater = 0
         }
         debug("approxMinutesToStartWaterHeater: ${atomicState.approxMinutesToStartWaterHeater}")
         debug("rollingVarianceMinutesToStartWaterHeater: ${atomicState.rollingVarianceMinutesToStartWaterHeater}")
