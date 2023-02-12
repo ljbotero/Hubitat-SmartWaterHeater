@@ -91,7 +91,7 @@ def mainPage() {
 /****************************************************************************/
 
 def getMinumumWaterFlow() {
-    return 12
+    return 45
 }
 
 def getDefaultMaxShowerDurationInMinutes() {
@@ -99,7 +99,7 @@ def getDefaultMaxShowerDurationInMinutes() {
 }
 
 def getSecondsAverageShower() {
-    return 60 // This must be smaller than MaxShowerDurationInMinutes
+    return 120 // This must be smaller than MaxShowerDurationInMinutes
 }
 
 def getWaitSecondsBetweenShowers() {
@@ -132,6 +132,9 @@ def setWaterHeaterOn() {
     debug("setWaterHeaterOn")
     def minutesSinceLastRan = Math.round((now() - atomicState.timeHeatingEnded) / (60 * 1000)).toInteger()
     debug("minutesSinceLastRan = ${minutesSinceLastRan}, maxMinutesWaterHeaterStaysHot = ${atomicState.maxMinutesWaterHeaterStaysHot}")
+    if (atomicState.rollingVarianceMinutesToStartWaterHeater > 100) {
+        atomicState.rollingVarianceMinutesToStartWaterHeater = 0
+    }
     def runInMinutes = (atomicState.approxMinutesToStartWaterHeater + atomicState.rollingVarianceMinutesToStartWaterHeater).toInteger() 
     if (!atomicState.isHeating && minutesSinceLastRan >= atomicState.maxMinutesWaterHeaterStaysHot && runInMinutes > 0) {
         debug("checkWaterHeaterStarted in ${runInMinutes} minutes")
@@ -229,6 +232,7 @@ def initialize() {
     atomicState.showerStartedTime = 0
     atomicState.setWaterHeaterOffAt = 0    
     atomicState.scheduledFlowRateStopped = false
+    atomicState.toggleSwitchChangeValueLastTime = 0
     
     if (maxShowerDurationInMinutes == null) {
         app.updateSetting("maxShowerDurationInMinutes", getDefaultMaxShowerDurationInMinutes())
@@ -328,6 +332,11 @@ def toggleSwitchChangeValue(evtValue) {
     if (atomicState.toggleSwitchContactState == evtValue) {
         return
     }
+    debug("toggleSwitchChangeValue = ${evtValue}")
+    if (now() - atomicState.toggleSwitchChangeValueLastTime < 1000 * 2){
+      debug("Too soon to change switch")
+      return;
+    }
     atomicState.toggleSwitchContactState = evtValue
     if (evtValue == "off") {
         // Stop heating
@@ -339,7 +348,7 @@ def toggleSwitchChangeValue(evtValue) {
         circulateWaterOn()
         scheduleShutOff()
     }
-    debug("toggleSwitchChangeValue = ${evtValue}")
+    atomicState.toggleSwitchChangeValueLastTime = now()
 }
 
 def onScheduleHandlerWeekday() {
@@ -429,6 +438,9 @@ def updateWaterHeaterApproxTimes() {
                 (atomicState.rollingVarianceMinutesToStartWaterHeater - (atomicState.rollingVarianceMinutesToStartWaterHeater/10)) +
                 (atomicState.rollingVarianceMinutesToStartWaterHeater + (varianceMinutesToStartWaterHeater / 10))
         }
+        if (atomicState.rollingVarianceMinutesToStartWaterHeater > 100) {
+            atomicState.rollingVarianceMinutesToStartWaterHeater = 0
+        }
         debug("approxMinutesToStartWaterHeater: ${atomicState.approxMinutesToStartWaterHeater}")
         debug("rollingVarianceMinutesToStartWaterHeater: ${atomicState.rollingVarianceMinutesToStartWaterHeater}")
     } else {    
@@ -498,7 +510,7 @@ def handleFlowRateStopped() {
 }
 
 def handleFlowRateStarted() {
-    if (atomicState.showerStartedTime == 0) {
+    if (atomicState.showerStartedTime == 0 && atomicState.waterHeaterActive) {
         debug("Long shower detector started counting time")
         unschedule(setWaterHeaterOffAuto)
         runIn(maxShowerDurationInMinutes * 60, "setWaterHeaterOffAuto")
@@ -516,7 +528,7 @@ def liquidFlowRateHandler(evt) {
     if (evt.value.toInteger() <= getMinumumWaterFlow() && atomicState.showerStartedTime > 0 && !atomicState.scheduledFlowRateStopped) {
         runIn(getWaitSecondsBetweenShowers(), "handleFlowRateStopped")
         atomicState.scheduledFlowRateStopped = true
-    } else if (atomicState.waterHeaterActive && evt.value.toInteger() > getMinumumWaterFlow()) {
+    } else if (evt.value.toInteger() > getMinumumWaterFlow()) {
         unschedule(handleFlowRateStopped)
         atomicState.scheduledFlowRateStopped = false
         handleFlowRateStarted()
@@ -596,9 +608,12 @@ def onFinishedHeatingWater() {
     if (atomicState.waterHeaterActive ==  false) {
         return
     }
-    if (estimateMinutesToHeatWater && atomicState.startedOnSchedule && atomicState.showerStartedTime == 0) {
-        // Update estimate
+    if (estimateMinutesToHeatWater && atomicState.startedOnSchedule) {
         atomicState.minutesHeating = Math.round((atomicState.timeHeatingEnded - atomicState.timeHeatingStarted) / (60 * 1000)).toInteger()
+        if (atomicState.showerStartedTime > 0) {
+          atomicState.minutesHeating = atomicState.minutesHeating + 5 // Shower started before it finished heating
+        }
+        // Update estimate
         // Assuming 5 is the minimum it takes to heat the water from min temp and 60 is the max time it could take
         if (atomicState.minutesHeating > 5 && atomicState.minutesHeating < 60) {
             debug("Updating minutesToHeatWater to: ${atomicState.minutesHeating}")
